@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260813.1",
     "wrangler": "^4.122.0"
   }
 }
