@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cloudflare Pages Speedtest</title>
-    <!-- 計測用のコアスクリプト -->
-    <script src="https://cloudflare.com"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 40px 20px; background: #f4f4f7; color: #333; margin: 0; }
         .card { background: white; max-width: 460px; margin: 0 auto; padding: 30px; border-radius: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); box-sizing: border-box; }
@@ -16,8 +14,9 @@
 
         button { background: #ea6000; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; transition: background 0.2s; margin-bottom: 25px; }
         button:hover { background: #cc5200; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
         
-        /* 2. 識別系情報エリア（ロゴと速度の間） */
+        /* 2. 識別系情報エリア */
         .net-info { font-size: 14px; color: #555; background: #f9f9fb; padding: 15px; border-radius: 12px; margin-bottom: 25px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.02); }
         .info-row { display: flex; justify-content: space-between; margin: 8px 0; text-align: left; }
         .info-value { font-weight: 500; color: #333; }
@@ -38,7 +37,9 @@
     <div class="card">
         <!-- 1. ロゴエリア -->
         <div class="logo-container">
-            <img src="logo.png" alt="Speedtest Logo" class="logo-img">
+            <!-- ※ 読み込みエラーを回避するため、画像がない場合はテキストで代替え表示されます -->
+            <img src="logo.png" alt="Speedtest" class="logo-img" onerror="this.style.display='none'; document.getElementById('logo-fallback').style.display='block';">
+            <h2 id="logo-fallback" style="display:none; margin:0 0 15px 0; color:#ea6000;">SPEEDTEST</h2>
         </div>
 
         <button id="start-btn" onclick="startTest()">テスト開始</button>
@@ -83,35 +84,66 @@
                 document.querySelectorAll(".net-info .info-value").forEach(el => el.textContent = "取得失敗");
             });
 
-        function startTest() {
+        async function startTest() {
             const btn = document.getElementById("start-btn");
             btn.disabled = true;
-            btn.textContent = "測定中...";
+            
+            // 表示リセット
+            document.getElementById("ping").textContent = "- ms";
+            document.getElementById("download").innerHTML = '- <span style="font-size:14px;">Mbps</span>';
+            document.getElementById("upload").innerHTML = '- <span style="font-size:14px;">Mbps</span>';
 
-            const s = new Speedtest();
-            s.setParameter("url_dl", "/api/download");
-            s.setParameter("url_ul", "/api/upload");
-            s.setParameter("url_ping", "/api/empty");
-            s.setParameter("url_getIp", "/api/empty");
+            try {
+                // 1. Ping 測定 (3回計測して平均をとる)
+                btn.textContent = "Ping測定中...";
+                let totalPing = 0;
+                for (let i = 0; i < 3; i++) {
+                    const start = performance.now();
+                    await fetch('/api/empty', { cache: 'no-store' });
+                    totalPing += (performance.now() - start);
+                }
+                const pingResult = Math.round(totalPing / 3);
+                document.getElementById("ping").textContent = pingResult + " ms";
 
-            s.onupdate = function(data) {
-                if (data.pingStatus) {
-                    document.getElementById("ping").textContent = data.pingStatus + " ms";
+                // 2. ダウンロード測定 (12MBのストリームデータをダウンロード)
+                btn.textContent = "ダウンロード測定中...";
+                const dlSize = 12582912; // 12MB
+                const dlStart = performance.now();
+                const dlRes = await fetch(`/api/download?size=${dlSize}`, { cache: 'no-store' });
+                
+                // ストリームを完全に読み切る
+                const reader = dlRes.body.getReader();
+                while (true) {
+                    const { done } = await reader.read();
+                    if (done) break;
                 }
-                if (data.dlStatus) {
-                    document.getElementById("download").innerHTML = data.dlStatus + ' <span style="font-size:14px;">Mbps</span>';
-                }
-                if (data.ulStatus) {
-                    document.getElementById("upload").innerHTML = data.ulStatus + ' <span style="font-size:14px;">Mbps</span>';
-                }
-            };
+                const dlDuration = (performance.now() - dlStart) / 1000; // 秒換算
+                const dlMbps = ((dlSize * 8) / (1024 * 1024) / dlDuration).toFixed(2);
+                document.getElementById("download").innerHTML = dlMbps + ' <span style="font-size:14px;">Mbps</span>';
 
-            s.onend = function() {
+                // 3. アップロード測定 (4MBのダミーデータをPOST送信)
+                btn.textContent = "アップロード測定中...";
+                const ulSize = 4194304; // 4MB
+                const dummyData = new Uint8Array(ulSize);
+                const ulStart = performance.now();
+                
+                await fetch('/api/upload', {
+                    method: 'POST',
+                    body: dummyData,
+                    cache: 'no-store'
+                });
+                
+                const ulDuration = (performance.now() - ulStart) / 1000;
+                const ulMbps = ((ulSize * 8) / (1024 * 1024) / ulDuration).toFixed(2);
+                document.getElementById("upload").innerHTML = ulMbps + ' <span style="font-size:14px;">Mbps</span>';
+
+            } catch (err) {
+                alert("測定中にエラーが発生しました。");
+                console.error(err);
+            } finally {
                 btn.disabled = false;
                 btn.textContent = "テスト開始";
-            };
-
-            s.start();
+            }
         }
     </script>
 </body>
